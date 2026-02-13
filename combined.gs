@@ -103,11 +103,10 @@ function checkRateLimit(sheet, email) {
 // ---------------------------------------------------------------------------
 
 /**
- * Builds the command that the HeyGen Bot recognizes.
- * Uses plain text @HeyGen Bot since <@USER_ID> doesn't work in workflow messages.
+ * Builds the command part (without the @mention — that's hardcoded in the workflow).
  */
 function buildHeyGenCommand(email) {
-  return '@HeyGen Bot enterprise subscription ' +
+  return ' enterprise subscription ' +
     email + ' --api-sub True --api-quota 1000 --days 3';
 }
 
@@ -286,7 +285,7 @@ function retryRow(rowNumber) {
  * Run this from the editor to isolate webhook vs message content issues.
  */
 function testWebhook() {
-  var result = postSlackMessage('<@U066W8JMZMW> hello this is a test');
+  var result = postSlackMessage(' enterprise subscription test@example.com --api-sub True --api-quota 1000 --days 3');
   Logger.log('Test result: ' + JSON.stringify(result));
 }
 
