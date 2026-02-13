@@ -6,9 +6,7 @@
 //   1. Open your existing linked Google Sheet → Extensions → Apps Script
 //   2. Delete everything in Code.gs and paste this entire file
 //   3. Go to Project Settings → Script Properties and add:
-//        SLACK_BOT_TOKEN     = xoxb-...
-//        SLACK_CHANNEL_ID    = C...
-//        HEYGEN_BOT_USER_ID  = U066W8JMZMW
+//        SERVER_URL  = http://3.144.17.55:5000
 //   4. In the editor, select "setup" from the function dropdown → click Run
 //   5. Approve the authorization prompt
 //   6. Done! Submit the form to test.
@@ -43,21 +41,17 @@ var MAX_SUBMISSIONS_PER_EMAIL = 3;
  */
 function getConfig() {
   var props = PropertiesService.getScriptProperties();
-  var token     = props.getProperty('SLACK_BOT_TOKEN');
-  var channel   = props.getProperty('SLACK_CHANNEL_ID');
-  var botUserId = props.getProperty('HEYGEN_BOT_USER_ID');
+  var serverUrl = props.getProperty('SERVER_URL');
 
-  if (!token || !channel || !botUserId) {
+  if (!serverUrl) {
     throw new Error(
-      'Missing Script Properties. Ensure SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, ' +
-      'and HEYGEN_BOT_USER_ID are set in Project Settings → Script Properties.'
+      'Missing Script Properties. Ensure SERVER_URL is set in ' +
+      'Project Settings → Script Properties. Example: http://3.144.17.55:5000'
     );
   }
 
   return {
-    slackBotToken:    token,
-    slackChannelId:   channel,
-    heygenBotUserId:  botUserId
+    serverUrl: serverUrl
   };
 }
 
@@ -102,51 +96,45 @@ function checkRateLimit(sheet, email) {
 
 
 // ---------------------------------------------------------------------------
-// SLACK SERVICE — Posts via Slack chat.postMessage API with bot token
+// SLACK SERVICE — Posts via EC2 Playwright automation server
 // ---------------------------------------------------------------------------
 
 /**
- * Builds the command that the HeyGen Bot recognizes.
- * Uses <@USER_ID> format which creates a real @mention via the API.
+ * Sends the HeyGen command by calling the EC2 Playwright server.
+ * The server types the message in Slack as a real user, which triggers
+ * the HeyGen Bot to respond.
  */
-function buildHeyGenCommand(email) {
+function postSlackMessage(email) {
   var config = getConfig();
-  return '<@' + config.heygenBotUserId + '> enterprise subscription ' +
-    email + ' --api-sub True --api-quota 1000 --days 3';
-}
-
-/**
- * Posts a message to the configured Slack channel via chat.postMessage.
- */
-function postSlackMessage(text) {
-  var config = getConfig();
-  var url = 'https://slack.com/api/chat.postMessage';
+  var url = config.serverUrl + '/send';
 
   var payload = {
-    channel: config.slackChannelId,
-    text: text,
-    unfurl_links: false,
-    unfurl_media: false
+    email: email,
+    api_sub: 'True',
+    api_quota: '1000',
+    days: '3'
   };
 
   var options = {
     method: 'post',
-    contentType: 'application/json; charset=utf-8',
-    headers: {
-      'Authorization': 'Bearer ' + config.slackBotToken
-    },
+    contentType: 'application/json',
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   };
 
-  var response = UrlFetchApp.fetch(url, options);
-  var body = JSON.parse(response.getContentText());
+  try {
+    var response = UrlFetchApp.fetch(url, options);
+    var body = JSON.parse(response.getContentText());
 
-  if (!body.ok) {
-    Logger.log('Slack API error: ' + body.error);
+    if (!body.ok) {
+      Logger.log('Server error: ' + body.error);
+    }
+
+    return { ok: body.ok, error: body.error };
+  } catch (err) {
+    Logger.log('Server request failed: ' + err.message);
+    return { ok: false, error: err.message };
   }
-
-  return { ok: body.ok, error: body.error };
 }
 
 
@@ -187,10 +175,9 @@ function onFormSubmit(e) {
       return;
     }
 
-    var command = buildHeyGenCommand(email);
-    Logger.log('Posting to Slack: ' + command);
-    var result = postSlackMessage(command);
-    Logger.log('Slack response: ' + JSON.stringify(result));
+    Logger.log('Sending to automation server for: ' + email);
+    var result = postSlackMessage(email);
+    Logger.log('Server response: ' + JSON.stringify(result));
 
     if (result.ok) {
       writeStatus(sheet, row, 'SUCCESS', rateCheck.currentCount + 1);
@@ -234,8 +221,8 @@ function setup() {
     'Setup complete!\n\n' +
     '1. Trigger "onFormSubmit" has been created.\n' +
     '2. Columns I (Status) and J (Count) are ready.\n\n' +
-    'Make sure you have set SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, ' +
-    'and HEYGEN_BOT_USER_ID in Project Settings → Script Properties.'
+    'Make sure you have set SERVER_URL in Project Settings → Script Properties.\n' +
+    'Example: http://3.144.17.55:5000'
   );
 }
 
@@ -277,8 +264,7 @@ function retryRow(rowNumber) {
     return;
   }
 
-  var command = buildHeyGenCommand(email);
-  var result = postSlackMessage(command);
+  var result = postSlackMessage(email);
 
   if (result.ok) {
     writeStatus(sheet, rowNumber, 'SUCCESS', rateCheck.currentCount + 1);
@@ -290,14 +276,12 @@ function retryRow(rowNumber) {
 }
 
 /**
- * Test function — sends a test message to verify the bot token and channel work.
+ * Test function — sends a test message to verify the server works.
  * Run this from the editor before testing with the form.
  */
 function testWebhook() {
-  var config = getConfig();
-  var testMessage = '<@' + config.heygenBotUserId + '> enterprise subscription test@example.com --api-sub True --api-quota 1000 --days 3';
-  Logger.log('Sending: ' + testMessage);
-  var result = postSlackMessage(testMessage);
+  Logger.log('Testing automation server...');
+  var result = postSlackMessage('test@example.com');
   Logger.log('Result: ' + JSON.stringify(result));
 }
 
