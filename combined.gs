@@ -6,7 +6,8 @@
 //   1. Open your existing linked Google Sheet → Extensions → Apps Script
 //   2. Delete everything in Code.gs and paste this entire file
 //   3. Go to Project Settings → Script Properties and add:
-//        SLACK_WEBHOOK_URL   = https://slack.com/shortcuts/Ft0AEPU108PQ/63e56eefbb1efc7e90fd418642f58054
+//        SLACK_BOT_TOKEN     = xoxb-...
+//        SLACK_CHANNEL_ID    = C...
 //        HEYGEN_BOT_USER_ID  = U066W8JMZMW
 //   4. In the editor, select "setup" from the function dropdown → click Run
 //   5. Approve the authorization prompt
@@ -42,18 +43,20 @@ var MAX_SUBMISSIONS_PER_EMAIL = 3;
  */
 function getConfig() {
   var props = PropertiesService.getScriptProperties();
-  var webhookUrl = props.getProperty('SLACK_WEBHOOK_URL');
-  var botUserId  = props.getProperty('HEYGEN_BOT_USER_ID');
+  var token     = props.getProperty('SLACK_BOT_TOKEN');
+  var channel   = props.getProperty('SLACK_CHANNEL_ID');
+  var botUserId = props.getProperty('HEYGEN_BOT_USER_ID');
 
-  if (!webhookUrl || !botUserId) {
+  if (!token || !channel || !botUserId) {
     throw new Error(
-      'Missing Script Properties. Ensure SLACK_WEBHOOK_URL and ' +
-      'HEYGEN_BOT_USER_ID are set in Project Settings → Script Properties.'
+      'Missing Script Properties. Ensure SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, ' +
+      'and HEYGEN_BOT_USER_ID are set in Project Settings → Script Properties.'
     );
   }
 
   return {
-    slackWebhookUrl:  webhookUrl,
+    slackBotToken:    token,
+    slackChannelId:   channel,
     heygenBotUserId:  botUserId
   };
 }
@@ -99,44 +102,51 @@ function checkRateLimit(sheet, email) {
 
 
 // ---------------------------------------------------------------------------
-// SLACK SERVICE — Posts via Slack Workflow webhook (no admin access needed)
+// SLACK SERVICE — Posts via Slack chat.postMessage API with bot token
 // ---------------------------------------------------------------------------
 
 /**
- * Builds the command part (without the @mention — that's hardcoded in the workflow).
+ * Builds the command that the HeyGen Bot recognizes.
+ * Uses <@USER_ID> format which creates a real @mention via the API.
  */
 function buildHeyGenCommand(email) {
-  return ' enterprise subscription ' +
+  var config = getConfig();
+  return '<@' + config.heygenBotUserId + '> enterprise subscription ' +
     email + ' --api-sub True --api-quota 1000 --days 3';
 }
 
 /**
- * Posts a message to Slack via the Workflow webhook.
+ * Posts a message to the configured Slack channel via chat.postMessage.
  */
 function postSlackMessage(text) {
   var config = getConfig();
+  var url = 'https://slack.com/api/chat.postMessage';
 
   var payload = {
-    message: text
+    channel: config.slackChannelId,
+    text: text,
+    unfurl_links: false,
+    unfurl_media: false
   };
 
   var options = {
     method: 'post',
     contentType: 'application/json; charset=utf-8',
+    headers: {
+      'Authorization': 'Bearer ' + config.slackBotToken
+    },
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   };
 
-  var response = UrlFetchApp.fetch(config.slackWebhookUrl, options);
-  var code = response.getResponseCode();
+  var response = UrlFetchApp.fetch(url, options);
+  var body = JSON.parse(response.getContentText());
 
-  if (code === 200 || code === 202) {
-    return { ok: true };
-  } else {
-    var errorText = response.getContentText();
-    Logger.log('Slack webhook error (HTTP ' + code + '): ' + errorText);
-    return { ok: false, error: 'HTTP ' + code + ': ' + errorText };
+  if (!body.ok) {
+    Logger.log('Slack API error: ' + body.error);
   }
+
+  return { ok: body.ok, error: body.error };
 }
 
 
@@ -156,7 +166,6 @@ function onFormSubmit(e) {
   var email = String(sheet.getRange(row, COL_EMAIL).getValue()).trim();
   Logger.log('Row ' + row + ' — email from sheet: "' + email + '"');
 
-  email = String(email).trim();
   if (!email) {
     writeStatus(sheet, row, 'ERROR: empty email', 0);
     return;
@@ -225,8 +234,8 @@ function setup() {
     'Setup complete!\n\n' +
     '1. Trigger "onFormSubmit" has been created.\n' +
     '2. Columns I (Status) and J (Count) are ready.\n\n' +
-    'Make sure you have set SLACK_WEBHOOK_URL and ' +
-    'HEYGEN_BOT_USER_ID in Project Settings → Script Properties.'
+    'Make sure you have set SLACK_BOT_TOKEN, SLACK_CHANNEL_ID, ' +
+    'and HEYGEN_BOT_USER_ID in Project Settings → Script Properties.'
   );
 }
 
@@ -281,12 +290,15 @@ function retryRow(rowNumber) {
 }
 
 /**
- * Test function — sends a plain "hello" to verify the webhook works.
- * Run this from the editor to isolate webhook vs message content issues.
+ * Test function — sends a test message to verify the bot token and channel work.
+ * Run this from the editor before testing with the form.
  */
 function testWebhook() {
-  var result = postSlackMessage(' enterprise subscription test@example.com --api-sub True --api-quota 1000 --days 3');
-  Logger.log('Test result: ' + JSON.stringify(result));
+  var config = getConfig();
+  var testMessage = '<@' + config.heygenBotUserId + '> enterprise subscription test@example.com --api-sub True --api-quota 1000 --days 3';
+  Logger.log('Sending: ' + testMessage);
+  var result = postSlackMessage(testMessage);
+  Logger.log('Result: ' + JSON.stringify(result));
 }
 
 /**
