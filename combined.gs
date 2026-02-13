@@ -282,6 +282,15 @@ function retryRow(rowNumber) {
 }
 
 /**
+ * Test function — sends a plain "hello" to verify the webhook works.
+ * Run this from the editor to isolate webhook vs message content issues.
+ */
+function testWebhook() {
+  var result = postSlackMessage('hello this is a test');
+  Logger.log('Test result: ' + JSON.stringify(result));
+}
+
+/**
  * Helper to write status and count to the tracking columns.
  */
 function writeStatus(sheet, row, status, count) {
