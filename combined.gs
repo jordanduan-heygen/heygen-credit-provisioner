@@ -1,15 +1,18 @@
 // =============================================================================
-// HeyGen Credit Provisioner — Hackathon Edition
+// HeyGen Credit Provisioner — Hackathon Edition (Polling Mode)
 // =============================================================================
 //
 // SETUP:
 //   1. Open your existing linked Google Sheet → Extensions → Apps Script
 //   2. Delete everything in Code.gs and paste this entire file
-//   3. Go to Project Settings → Script Properties and add:
-//        SERVER_URL  = http://3.144.17.55:5000
-//   4. In the editor, select "setup" from the function dropdown → click Run
-//   5. Approve the authorization prompt
-//   6. Done! Submit the form to test.
+//   3. In the editor, select "setup" from the function dropdown → click Run
+//   4. Deploy → New deployment → Web app
+//        Execute as: Me
+//        Who has access: Anyone
+//   5. Copy the web app URL and put it in config.json on the EC2 server
+//   6. Done! The EC2 server polls this web app for new submissions.
+//
+// NO Script Properties needed — everything is self-contained.
 //
 // Sheet columns:
 //   A=Timestamp  B=Name  C=Email  D=LinkedIn  E=Team  F=Idea  G=SignedUp  H=Actioned
@@ -19,10 +22,9 @@
 
 
 // ---------------------------------------------------------------------------
-// CONFIG — Constants and secrets
+// CONFIG — Constants
 // ---------------------------------------------------------------------------
 
-// Column indices matching your actual sheet (1-based)
 var COL_TIMESTAMP = 1;  // A
 var COL_NAME      = 2;  // B
 var COL_EMAIL     = 3;  // C — Email
@@ -36,33 +38,11 @@ var COL_COUNT     = 10; // J — auto-filled by this script
 
 var MAX_SUBMISSIONS_PER_EMAIL = 3;
 
-/**
- * Returns the required secrets from Script Properties.
- */
-function getConfig() {
-  var props = PropertiesService.getScriptProperties();
-  var serverUrl = props.getProperty('SERVER_URL');
-
-  if (!serverUrl) {
-    throw new Error(
-      'Missing Script Properties. Ensure SERVER_URL is set in ' +
-      'Project Settings → Script Properties. Example: http://3.144.17.55:5000'
-    );
-  }
-
-  return {
-    serverUrl: serverUrl
-  };
-}
-
 
 // ---------------------------------------------------------------------------
 // RATE LIMIT — Tracks per-email usage (case-insensitive)
 // ---------------------------------------------------------------------------
 
-/**
- * Counts rows where the email matches AND status is SUCCESS.
- */
 function countPreviousSubmissions(sheet, email) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return 0;
@@ -83,118 +63,105 @@ function countPreviousSubmissions(sheet, email) {
   return count;
 }
 
-/**
- * Checks whether the email is allowed another submission.
- */
-function checkRateLimit(sheet, email) {
-  var currentCount = countPreviousSubmissions(sheet, email);
-  return {
-    allowed: currentCount < MAX_SUBMISSIONS_PER_EMAIL,
-    currentCount: currentCount
-  };
-}
-
 
 // ---------------------------------------------------------------------------
-// SLACK SERVICE — Posts via EC2 Playwright automation server
+// WEB APP — doGet returns pending rows, doPost updates results
 // ---------------------------------------------------------------------------
 
 /**
- * Sends the HeyGen command by calling the EC2 Playwright server.
- * The server types the message in Slack as a real user, which triggers
- * the HeyGen Bot to respond.
+ * GET handler — returns rows where Status (col I) is empty.
+ * The EC2 server polls this endpoint.
  */
-function postSlackMessage(email) {
-  var config = getConfig();
-  var url = config.serverUrl + '/send';
-
-  var payload = {
-    email: email,
-    api_sub: 'True',
-    api_quota: '1000',
-    days: '3'
-  };
-
-  var options = {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true
-  };
-
-  try {
-    var response = UrlFetchApp.fetch(url, options);
-    var body = JSON.parse(response.getContentText());
-
-    if (!body.ok) {
-      Logger.log('Server error: ' + body.error);
-    }
-
-    return { ok: body.ok, error: body.error };
-  } catch (err) {
-    Logger.log('Server request failed: ' + err.message);
-    return { ok: false, error: err.message };
-  }
-}
-
-
-// ---------------------------------------------------------------------------
-// MAIN — Trigger, setup, retry, helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Installable trigger handler for form submissions.
- * Uses LockService to serialize concurrent submissions and prevent race conditions.
- */
-function onFormSubmit(e) {
+function doGet(e) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
-  var row = e.range.getRow();
+  var lastRow = sheet.getLastRow();
 
-  // Always read email directly from column C — most reliable method
-  var email = String(sheet.getRange(row, COL_EMAIL).getValue()).trim();
-  Logger.log('Row ' + row + ' — email from sheet: "' + email + '"');
-
-  if (!email) {
-    writeStatus(sheet, row, 'ERROR: empty email', 0);
-    return;
+  if (lastRow < 2) {
+    return ContentService.createTextOutput(
+      JSON.stringify({ status: 'ok', rows: [] })
+    ).setMimeType(ContentService.MimeType.JSON);
   }
 
-  // Acquire a script-level lock to serialize rate-limit checks
-  var lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(30000);
-  } catch (err) {
-    writeStatus(sheet, row, 'ERROR: lock timeout', 0);
-    return;
-  }
+  var data = sheet.getRange(2, 1, lastRow - 1, COL_COUNT).getValues();
+  var pendingRows = [];
 
-  try {
-    var rateCheck = checkRateLimit(sheet, email);
-    if (!rateCheck.allowed) {
-      writeStatus(sheet, row, 'RATE_LIMITED', rateCheck.currentCount);
-      return;
+  for (var i = 0; i < data.length; i++) {
+    var rowNum = i + 2;
+    var email = String(data[i][COL_EMAIL - 1]).trim();
+    var status = String(data[i][COL_STATUS - 1]).trim();
+
+    // Skip rows that already have a status
+    if (status && status !== 'undefined') continue;
+
+    // Skip rows with no email
+    if (!email || email === 'undefined') continue;
+
+    // Check rate limit
+    var prevCount = countPreviousSubmissions(sheet, email);
+    if (prevCount >= MAX_SUBMISSIONS_PER_EMAIL) {
+      // Auto-mark as rate limited
+      sheet.getRange(rowNum, COL_STATUS).setValue('RATE_LIMITED');
+      sheet.getRange(rowNum, COL_COUNT).setValue(prevCount);
+      continue;
     }
 
-    Logger.log('Sending to automation server for: ' + email);
-    var result = postSlackMessage(email);
-    Logger.log('Server response: ' + JSON.stringify(result));
+    // Mark as PENDING so it doesn't get picked up again
+    sheet.getRange(rowNum, COL_STATUS).setValue('PENDING');
 
-    if (result.ok) {
-      writeStatus(sheet, row, 'SUCCESS', rateCheck.currentCount + 1);
-    } else {
-      writeStatus(sheet, row, 'ERROR: ' + (result.error || 'unknown'), rateCheck.currentCount);
-    }
-  } catch (err) {
-    Logger.log('Exception: ' + err.message);
-    writeStatus(sheet, row, 'ERROR: ' + err.message, 0);
-  } finally {
-    lock.releaseLock();
+    pendingRows.push({
+      row: rowNum,
+      email: email,
+      count: prevCount
+    });
   }
+
+  return ContentService.createTextOutput(
+    JSON.stringify({ status: 'ok', rows: pendingRows })
+  ).setMimeType(ContentService.MimeType.JSON);
 }
 
 /**
- * One-time setup: creates the installable trigger and adds tracking column headers.
- * Run this from the editor after setting Script Properties.
+ * POST handler — receives results from the EC2 server.
+ * Body: { "row": 5, "status": "SUCCESS", "count": 1 }
+ */
+function doPost(e) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+
+  var body;
+  try {
+    body = JSON.parse(e.postData.contents);
+  } catch (err) {
+    return ContentService.createTextOutput(
+      JSON.stringify({ status: 'error', message: 'invalid JSON' })
+    ).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var rowNum = body.row;
+  var status = body.status;
+  var count  = body.count;
+
+  if (!rowNum || !status) {
+    return ContentService.createTextOutput(
+      JSON.stringify({ status: 'error', message: 'missing row or status' })
+    ).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  sheet.getRange(rowNum, COL_STATUS).setValue(status);
+  sheet.getRange(rowNum, COL_COUNT).setValue(count);
+
+  return ContentService.createTextOutput(
+    JSON.stringify({ status: 'ok' })
+  ).setMimeType(ContentService.MimeType.JSON);
+}
+
+
+// ---------------------------------------------------------------------------
+// SETUP — One-time configuration
+// ---------------------------------------------------------------------------
+
+/**
+ * One-time setup: adds tracking column headers.
+ * Run this from the editor, then deploy as web app.
  */
 function setup() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
@@ -203,7 +170,7 @@ function setup() {
   if (!sheet.getRange(1, COL_STATUS).getValue()) sheet.getRange(1, COL_STATUS).setValue('Status');
   if (!sheet.getRange(1, COL_COUNT).getValue())  sheet.getRange(1, COL_COUNT).setValue('Count');
 
-  // Remove existing onFormSubmit triggers to avoid duplicates
+  // Remove any existing onFormSubmit triggers (no longer needed)
   var triggers = ScriptApp.getProjectTriggers();
   for (var i = 0; i < triggers.length; i++) {
     if (triggers[i].getHandlerFunction() === 'onFormSubmit') {
@@ -211,78 +178,15 @@ function setup() {
     }
   }
 
-  // Create the installable trigger
-  ScriptApp.newTrigger('onFormSubmit')
-    .forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet())
-    .onFormSubmit()
-    .create();
-
   SpreadsheetApp.getUi().alert(
     'Setup complete!\n\n' +
-    '1. Trigger "onFormSubmit" has been created.\n' +
-    '2. Columns I (Status) and J (Count) are ready.\n\n' +
-    'Make sure you have set SERVER_URL in Project Settings → Script Properties.\n' +
-    'Example: http://3.144.17.55:5000'
+    '1. Columns I (Status) and J (Count) are ready.\n' +
+    '2. Old form triggers have been removed.\n\n' +
+    'Next: Deploy → New deployment → Web app\n' +
+    '  Execute as: Me\n' +
+    '  Who has access: Anyone\n\n' +
+    'Copy the web app URL into config.json on your EC2 server.'
   );
-}
-
-/**
- * Manual retry for a row that previously failed.
- * Run from editor: select retryRow → Run → enter row number when prompted.
- */
-function retryRow(rowNumber) {
-  if (!rowNumber) {
-    var ui = SpreadsheetApp.getUi();
-    var response = ui.prompt('Retry Row', 'Enter the row number to retry:', ui.ButtonSet.OK_CANCEL);
-    if (response.getSelectedButton() !== ui.Button.OK) return;
-    rowNumber = parseInt(response.getResponseText(), 10);
-  }
-
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
-
-  if (rowNumber < 2) {
-    Logger.log('Row must be >= 2 (row 1 is headers)');
-    return;
-  }
-
-  var email = String(sheet.getRange(rowNumber, COL_EMAIL).getValue()).trim();
-  if (!email) {
-    Logger.log('No email found in row ' + rowNumber);
-    return;
-  }
-
-  var currentStatus = String(sheet.getRange(rowNumber, COL_STATUS).getValue());
-  if (currentStatus === 'SUCCESS') {
-    Logger.log('Row ' + rowNumber + ' already succeeded — skipping to prevent duplicate grant.');
-    return;
-  }
-
-  var rateCheck = checkRateLimit(sheet, email);
-  if (!rateCheck.allowed) {
-    writeStatus(sheet, rowNumber, 'RATE_LIMITED', rateCheck.currentCount);
-    Logger.log('Row ' + rowNumber + ' rate-limited (' + rateCheck.currentCount + '/' + MAX_SUBMISSIONS_PER_EMAIL + ')');
-    return;
-  }
-
-  var result = postSlackMessage(email);
-
-  if (result.ok) {
-    writeStatus(sheet, rowNumber, 'SUCCESS', rateCheck.currentCount + 1);
-    Logger.log('Row ' + rowNumber + ' retried successfully.');
-  } else {
-    writeStatus(sheet, rowNumber, 'ERROR: ' + (result.error || 'unknown'), rateCheck.currentCount);
-    Logger.log('Row ' + rowNumber + ' retry failed: ' + result.error);
-  }
-}
-
-/**
- * Test function — sends a test message to verify the server works.
- * Run this from the editor before testing with the form.
- */
-function testWebhook() {
-  Logger.log('Testing automation server...');
-  var result = postSlackMessage('test@example.com');
-  Logger.log('Result: ' + JSON.stringify(result));
 }
 
 /**
