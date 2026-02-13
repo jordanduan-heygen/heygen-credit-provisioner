@@ -15,8 +15,9 @@
 // NO Script Properties needed — everything is self-contained.
 //
 // Sheet columns:
-//   A=Timestamp  B=Name  C=Email  D=LinkedIn  E=Team  F=Idea  G=SignedUp  H=Actioned
-//   I=Status (auto)  J=Count (auto)
+//   A=Timestamp  B=Name  C=Email  D=Team Name  E=Project Idea
+//   F=SignedUp1  G=SignedUp2  H=LinkedIn  I=Resume  J=(unused)
+//   K=Status (auto)  L=Count (auto)
 //
 // =============================================================================
 
@@ -25,16 +26,18 @@
 // CONFIG — Constants
 // ---------------------------------------------------------------------------
 
-var COL_TIMESTAMP = 1;  // A
-var COL_NAME      = 2;  // B
-var COL_EMAIL     = 3;  // C — Email
-var COL_LINKEDIN  = 4;  // D
-var COL_TEAM      = 5;  // E
-var COL_IDEA      = 6;  // F
-var COL_SIGNEDUP  = 7;  // G — "I have signed up for..."
-var COL_ACTIONED  = 8;  // H — manual "Actioned? Y/N"
-var COL_STATUS    = 9;  // I — auto-filled by this script
-var COL_COUNT     = 10; // J — auto-filled by this script
+var COL_TIMESTAMP  = 1;   // A
+var COL_NAME       = 2;   // B
+var COL_EMAIL      = 3;   // C — Email
+var COL_TEAM       = 4;   // D — Team Name
+var COL_IDEA       = 5;   // E — Project Idea
+var COL_SIGNEDUP1  = 6;   // F — Signed up (HeyGen)
+var COL_SIGNEDUP2  = 7;   // G — Signed up (LiveAvatar)
+var COL_LINKEDIN   = 8;   // H — LinkedIn (optional)
+var COL_RESUME     = 9;   // I — Resume (optional) — DO NOT OVERWRITE
+// Column J (10) is unused / legacy
+var COL_STATUS     = 11;  // K — auto-filled by this script
+var COL_COUNT      = 12;  // L — auto-filled by this script
 
 var MAX_SUBMISSIONS_PER_EMAIL = 3;
 
