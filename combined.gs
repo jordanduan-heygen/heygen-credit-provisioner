@@ -286,7 +286,7 @@ function retryRow(rowNumber) {
  * Run this from the editor to isolate webhook vs message content issues.
  */
 function testWebhook() {
-  var result = postSlackMessage('hello this is a test');
+  var result = postSlackMessage('<@U066W8JMZMW> hello this is a test');
   Logger.log('Test result: ' + JSON.stringify(result));
 }
 
