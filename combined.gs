@@ -104,10 +104,10 @@ function checkRateLimit(sheet, email) {
 
 /**
  * Builds the command that the HeyGen Bot recognizes.
+ * Uses plain text @HeyGen Bot since <@USER_ID> doesn't work in workflow messages.
  */
 function buildHeyGenCommand(email) {
-  var config = getConfig();
-  return '<@' + config.heygenBotUserId + '> enterprise subscription ' +
+  return '@HeyGen Bot enterprise subscription ' +
     email + ' --api-sub True --api-quota 1000 --days 3';
 }
 
@@ -153,18 +153,9 @@ function onFormSubmit(e) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
   var row = e.range.getRow();
 
-  // Extract email — try named values first, then positional, then direct read
-  var email = '';
-  if (e.namedValues) {
-    // Try common form field names
-    email = (e.namedValues['Email'] || e.namedValues['Email Address'] || e.namedValues['Email address'] || [''])[0];
-  }
-  if (!email && e.values && e.values.length >= 3) {
-    email = e.values[2]; // index 2 = column C (0-based from values array)
-  }
-  if (!email) {
-    email = sheet.getRange(row, COL_EMAIL).getValue();
-  }
+  // Always read email directly from column C — most reliable method
+  var email = String(sheet.getRange(row, COL_EMAIL).getValue()).trim();
+  Logger.log('Row ' + row + ' — email from sheet: "' + email + '"');
 
   email = String(email).trim();
   if (!email) {
@@ -189,7 +180,9 @@ function onFormSubmit(e) {
     }
 
     var command = buildHeyGenCommand(email);
+    Logger.log('Posting to Slack: ' + command);
     var result = postSlackMessage(command);
+    Logger.log('Slack response: ' + JSON.stringify(result));
 
     if (result.ok) {
       writeStatus(sheet, row, 'SUCCESS', rateCheck.currentCount + 1);
@@ -197,6 +190,7 @@ function onFormSubmit(e) {
       writeStatus(sheet, row, 'ERROR: ' + (result.error || 'unknown'), rateCheck.currentCount);
     }
   } catch (err) {
+    Logger.log('Exception: ' + err.message);
     writeStatus(sheet, row, 'ERROR: ' + err.message, 0);
   } finally {
     lock.releaseLock();
