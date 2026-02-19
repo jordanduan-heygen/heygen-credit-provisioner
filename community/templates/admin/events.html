@@ -1,0 +1,76 @@
+{% extends "admin/base.html" %}
+{% block title %}Events{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Events</h1>
+    <a href="/community/admin/events/new" class="btn-primary btn-sm">+ Create Event</a>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Slug</th>
+            <th>Date Range</th>
+            <th>Grant</th>
+            <th>Claims</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="events-body">
+        <tr><td colspan="7" class="loading">Loading...</td></tr>
+    </tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DEV_PARAMS = "{{ dev_params }}";
+
+async function loadEvents() {
+    const resp = await fetch("/api/community/admin/events?" + DEV_PARAMS);
+    const events = await resp.json();
+
+    const tbody = document.getElementById("events-body");
+    if (events.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">No events</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = events.map(e => `
+        <tr>
+            <td><strong>${e.name}</strong></td>
+            <td><code>${e.slug}</code></td>
+            <td>${e.starts_at || "—"} to ${e.ends_at || "—"}</td>
+            <td>${e.grant_days}d / ${e.api_quota} quota</td>
+            <td>${e.stats?.success || 0} / ${e.max_claims}</td>
+            <td>
+                <span class="status-dot ${e.active ? 'status-live' : 'status-inactive'}"></span>
+                ${e.active ? "Live" : "Inactive"}
+                <button class="btn-link" onclick="toggleEvent('${e.slug}', ${!e.active})">
+                    ${e.active ? "Deactivate" : "Activate"}
+                </button>
+            </td>
+            <td>
+                <a href="/community/admin/events/${e.slug}" class="btn-link">Details</a>
+                <a href="/community/${e.slug}" target="_blank" class="btn-link">Page</a>
+                <a href="/community/${e.slug}/qr" target="_blank" class="btn-link">QR</a>
+            </td>
+        </tr>
+    `).join("");
+}
+
+async function toggleEvent(slug, active) {
+    await fetch(`/api/community/admin/events/${slug}?` + DEV_PARAMS, {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({active}),
+    });
+    loadEvents();
+}
+
+loadEvents();
+</script>
+{% endblock %}

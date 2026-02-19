@@ -1,0 +1,160 @@
+{% extends "admin/base.html" %}
+{% block title %}Audit Log{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Audit Log</h1>
+</div>
+
+<div class="filter-bar">
+    <select id="event-filter" onchange="loadClaims()">
+        <option value="">All events</option>
+    </select>
+    <select id="status-filter" onchange="loadClaims()">
+        <option value="">All statuses</option>
+        <option value="SUCCESS">Success</option>
+        <option value="PENDING">Pending</option>
+        <option value="ERROR">Error</option>
+        <option value="RATE_LIMITED">Rate Limited</option>
+    </select>
+    <input type="text" id="email-search" placeholder="Search by email..."
+           oninput="debouncedSearch()">
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Email</th>
+            <th>Name</th>
+            <th>Event</th>
+            <th>Status</th>
+            <th>Attempt</th>
+            <th>Created</th>
+            <th>Granted</th>
+            <th>Expires</th>
+            <th>Rerun By</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="claims-body">
+        <tr><td colspan="11" class="loading">Loading...</td></tr>
+    </tbody>
+</table>
+
+<div class="pagination">
+    <button class="btn-secondary btn-sm" id="btn-prev" onclick="prevPage()" disabled>Previous</button>
+    <span id="page-info">Page 1</span>
+    <button class="btn-secondary btn-sm" id="btn-next" onclick="nextPage()">Next</button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DEV_PARAMS = "{{ dev_params }}";
+const PAGE_SIZE = 50;
+let currentPage = 0;
+let allClaims = [];
+let searchTimer = null;
+
+async function loadEvents() {
+    const resp = await fetch("/api/community/admin/events?" + DEV_PARAMS);
+    const events = await resp.json();
+    const sel = document.getElementById("event-filter");
+    events.forEach(e => {
+        const opt = document.createElement("option");
+        opt.value = e.slug;
+        opt.textContent = e.name;
+        sel.appendChild(opt);
+    });
+}
+
+async function loadClaims() {
+    currentPage = 0;
+    await fetchClaims();
+}
+
+async function fetchClaims() {
+    const eventSlug = document.getElementById("event-filter").value;
+    const status = document.getElementById("status-filter").value;
+    let url = `/api/community/admin/claims?limit=${PAGE_SIZE}&offset=${currentPage * PAGE_SIZE}&` + DEV_PARAMS;
+    if (eventSlug) url += `&event_slug=${eventSlug}`;
+    if (status) url += `&status=${status}`;
+
+    const resp = await fetch(url);
+    allClaims = await resp.json();
+
+    const email = document.getElementById("email-search").value.toLowerCase();
+    let filtered = allClaims;
+    if (email) {
+        filtered = allClaims.filter(c => c.email.toLowerCase().includes(email));
+    }
+
+    renderClaims(filtered);
+}
+
+function renderClaims(claims) {
+    const tbody = document.getElementById("claims-body");
+    if (claims.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" class="empty">No claims found</td></tr>';
+    } else {
+        tbody.innerHTML = claims.map(c => `
+            <tr>
+                <td>${c.id}</td>
+                <td>${c.email}</td>
+                <td>${c.name || "—"}</td>
+                <td><code>${c.event_slug}</code></td>
+                <td><span class="claim-status claim-${c.status.toLowerCase()}">${c.status}</span></td>
+                <td>${c.attempt}</td>
+                <td>${c.created_at}</td>
+                <td>${c.granted_at || "—"}</td>
+                <td>${c.expires_at || "—"}</td>
+                <td>${c.rerun_by || "—"}</td>
+                <td>
+                    ${c.status !== "PENDING" ?
+                        `<button class="btn-link" onclick="rerunClaim(${c.id})">Rerun</button>` : "—"}
+                </td>
+            </tr>
+        `).join("");
+    }
+
+    document.getElementById("page-info").textContent = `Page ${currentPage + 1}`;
+    document.getElementById("btn-prev").disabled = currentPage === 0;
+    document.getElementById("btn-next").disabled = claims.length < PAGE_SIZE;
+}
+
+async function rerunClaim(claimId) {
+    if (!confirm("Rerun this claim?")) return;
+    const resp = await fetch(
+        `/api/community/admin/claims/${claimId}/rerun?` + DEV_PARAMS,
+        {method: "POST"}
+    );
+    const data = await resp.json();
+    alert(data.message || data.detail);
+    fetchClaims();
+}
+
+function prevPage() {
+    if (currentPage > 0) { currentPage--; fetchClaims(); }
+}
+
+function nextPage() {
+    currentPage++;
+    fetchClaims();
+}
+
+function debouncedSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+        const email = document.getElementById("email-search").value.toLowerCase();
+        const filtered = email
+            ? allClaims.filter(c => c.email.toLowerCase().includes(email))
+            : allClaims;
+        renderClaims(filtered);
+    }, 300);
+}
+
+loadEvents();
+loadClaims();
+</script>
+{% endblock %}

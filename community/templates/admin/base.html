@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Admin{% endblock %} — HeyGen Community</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/admin.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="admin-nav">
+        <div class="nav-left">
+            <a href="/community/admin/" class="nav-brand">HeyGen Community Admin</a>
+        </div>
+        <div class="nav-links">
+            <a href="/community/admin/">Dashboard</a>
+            <a href="/community/admin/events">Events</a>
+            <a href="/community/admin/claims">Audit Log</a>
+        </div>
+    </nav>
+    <main class="admin-main">
+        {% block content %}{% endblock %}
+    </main>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

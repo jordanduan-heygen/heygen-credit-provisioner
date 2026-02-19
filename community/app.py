@@ -148,6 +148,70 @@ def claim_status(event_slug: str, request: Request):
     )
 
 
+def _dev_params(request: Request) -> str:
+    """Build dev query params string for admin templates to pass to API calls."""
+    from community.config import DEV_MODE
+    if DEV_MODE:
+        email = request.query_params.get("dev_email", "admin@heygen.com")
+        return f"dev_email={email}&dev_account_id=dev-admin-001&dev_name=Admin"
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Admin HTML Pages
+# ---------------------------------------------------------------------------
+
+@app.get("/community/admin/")
+def admin_dashboard(request: Request):
+    require_admin(request)
+    return templates.TemplateResponse("admin/dashboard.html", {
+        "request": request,
+        "dev_params": _dev_params(request),
+    })
+
+
+@app.get("/community/admin/events")
+def admin_events_page(request: Request):
+    require_admin(request)
+    return templates.TemplateResponse("admin/events.html", {
+        "request": request,
+        "dev_params": _dev_params(request),
+    })
+
+
+@app.get("/community/admin/events/new")
+def admin_event_new_page(request: Request):
+    require_admin(request)
+    return templates.TemplateResponse("admin/event_new.html", {
+        "request": request,
+        "dev_params": _dev_params(request),
+    })
+
+
+@app.get("/community/admin/events/{slug}")
+def admin_event_detail_page(slug: str, request: Request):
+    admin = require_admin(request)
+    event = db.get_event(slug)
+    if not event:
+        raise HTTPException(404, "Event not found")
+    stats = db.event_stats(slug)
+    return templates.TemplateResponse("admin/event_detail.html", {
+        "request": request,
+        "event": event,
+        "stats": stats,
+        "dev_params": _dev_params(request),
+    })
+
+
+@app.get("/community/admin/claims")
+def admin_claims_page(request: Request):
+    require_admin(request)
+    return templates.TemplateResponse("admin/claims.html", {
+        "request": request,
+        "dev_params": _dev_params(request),
+    })
+
+
 # ---------------------------------------------------------------------------
 # Admin API
 # ---------------------------------------------------------------------------

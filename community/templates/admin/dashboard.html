@@ -1,0 +1,160 @@
+{% extends "admin/base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <a href="/community/admin/events/new" class="btn-primary btn-sm">+ Create Event</a>
+</div>
+
+<div class="stats-grid" id="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value" id="total-events">—</div>
+        <div class="stat-label">Total Events</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="active-events">—</div>
+        <div class="stat-label">Active Events</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="total-claims">—</div>
+        <div class="stat-label">Total Activations</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="active-grants">—</div>
+        <div class="stat-label">Active Grants</div>
+    </div>
+</div>
+
+<h2>Events</h2>
+<table class="data-table" id="events-table">
+    <thead>
+        <tr>
+            <th>Event</th>
+            <th>Slug</th>
+            <th>Claims</th>
+            <th>Active</th>
+            <th>Errors</th>
+            <th>Pending</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="events-body">
+        <tr><td colspan="8" class="loading">Loading...</td></tr>
+    </tbody>
+</table>
+
+<h2>Recent Claims</h2>
+<table class="data-table" id="claims-table">
+    <thead>
+        <tr>
+            <th>Email</th>
+            <th>Event</th>
+            <th>Status</th>
+            <th>Time</th>
+            <th>Expires</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="claims-body">
+        <tr><td colspan="6" class="loading">Loading...</td></tr>
+    </tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DEV_PARAMS = "{{ dev_params }}";
+
+async function apiFetch(url) {
+    const resp = await fetch(url + (url.includes("?") ? "&" : "?") + DEV_PARAMS);
+    return resp.json();
+}
+
+async function loadDashboard() {
+    const events = await apiFetch("/api/community/admin/events");
+    const claims = await apiFetch("/api/community/admin/claims?limit=20");
+
+    // Stats
+    let totalClaims = 0, activeGrants = 0;
+    const activeEvents = events.filter(e => e.active).length;
+    events.forEach(e => {
+        if (e.stats) {
+            totalClaims += e.stats.total || 0;
+            activeGrants += e.stats.active_grants || 0;
+        }
+    });
+    document.getElementById("total-events").textContent = events.length;
+    document.getElementById("active-events").textContent = activeEvents;
+    document.getElementById("total-claims").textContent = totalClaims;
+    document.getElementById("active-grants").textContent = activeGrants;
+
+    // Events table
+    const eventsBody = document.getElementById("events-body");
+    if (events.length === 0) {
+        eventsBody.innerHTML = '<tr><td colspan="8" class="empty">No events yet</td></tr>';
+    } else {
+        eventsBody.innerHTML = events.map(e => `
+            <tr>
+                <td><strong>${e.name}</strong></td>
+                <td><code>${e.slug}</code></td>
+                <td>${e.stats?.success || 0} / ${e.max_claims}</td>
+                <td>${e.stats?.active_grants || 0}</td>
+                <td>${e.stats?.errors || 0}</td>
+                <td>${e.stats?.pending || 0}</td>
+                <td><span class="status-dot ${e.active ? 'status-live' : 'status-inactive'}"></span>
+                    ${e.active ? 'Live' : 'Inactive'}</td>
+                <td>
+                    <a href="/community/admin/events/${e.slug}" class="btn-link">View</a>
+                    <a href="/community/${e.slug}/qr" target="_blank" class="btn-link">QR</a>
+                </td>
+            </tr>
+        `).join("");
+    }
+
+    // Claims table
+    const claimsBody = document.getElementById("claims-body");
+    if (claims.length === 0) {
+        claimsBody.innerHTML = '<tr><td colspan="6" class="empty">No claims yet</td></tr>';
+    } else {
+        claimsBody.innerHTML = claims.map(c => `
+            <tr>
+                <td>${c.email}</td>
+                <td><code>${c.event_slug}</code></td>
+                <td><span class="claim-status claim-${c.status.toLowerCase()}">${c.status}</span></td>
+                <td>${timeAgo(c.created_at)}</td>
+                <td>${c.expires_at ? new Date(c.expires_at + "Z").toLocaleDateString() : "—"}</td>
+                <td>
+                    ${c.status === "ERROR" || c.status === "SUCCESS" ?
+                        `<button class="btn-link" onclick="rerunClaim(${c.id})">Rerun</button>` : ""}
+                </td>
+            </tr>
+        `).join("");
+    }
+}
+
+async function rerunClaim(claimId) {
+    if (!confirm("Rerun this claim?")) return;
+    const resp = await fetch(
+        `/api/community/admin/claims/${claimId}/rerun?` + DEV_PARAMS,
+        {method: "POST"}
+    );
+    const data = await resp.json();
+    alert(data.message || data.detail);
+    loadDashboard();
+}
+
+function timeAgo(dateStr) {
+    const diff = Date.now() - new Date(dateStr + "Z").getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+}
+
+loadDashboard();
+</script>
+{% endblock %}

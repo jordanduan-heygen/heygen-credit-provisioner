@@ -1,0 +1,94 @@
+{% extends "admin/base.html" %}
+{% block title %}Create Event{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Create Event</h1>
+</div>
+
+<form class="admin-form" id="event-form" onsubmit="return createEvent(event)">
+    <div class="form-group">
+        <label for="slug">Slug</label>
+        <input type="text" id="slug" name="slug" required
+               pattern="[a-z0-9\-]+" placeholder="miami-2026"
+               title="Lowercase letters, numbers, and hyphens only">
+        <small>Used in URL: /community/<strong id="slug-preview">...</strong></small>
+    </div>
+
+    <div class="form-group">
+        <label for="name">Event Name</label>
+        <input type="text" id="name" name="name" required placeholder="HeyGen Miami Meetup">
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label for="starts_at">Starts At (UTC)</label>
+            <input type="datetime-local" id="starts_at" name="starts_at">
+        </div>
+        <div class="form-group">
+            <label for="ends_at">Ends At (UTC)</label>
+            <input type="datetime-local" id="ends_at" name="ends_at">
+        </div>
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label for="grant_days">Grant Duration (days)</label>
+            <input type="number" id="grant_days" name="grant_days" value="3" min="1" max="30">
+        </div>
+        <div class="form-group">
+            <label for="api_quota">API Quota</label>
+            <input type="number" id="api_quota" name="api_quota" value="1000" min="1">
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label for="max_claims">Max Claims</label>
+        <input type="number" id="max_claims" name="max_claims" value="200" min="1">
+    </div>
+
+    <div class="form-actions">
+        <button type="submit" class="btn-primary btn-sm">Create Event</button>
+        <a href="/community/admin/events" class="btn-secondary btn-sm">Cancel</a>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DEV_PARAMS = "{{ dev_params }}";
+
+document.getElementById("slug").addEventListener("input", function() {
+    document.getElementById("slug-preview").textContent = this.value || "...";
+});
+
+async function createEvent(e) {
+    e.preventDefault();
+    const form = document.getElementById("event-form");
+    const data = {
+        slug: form.slug.value,
+        name: form.name.value,
+        starts_at: form.starts_at.value ? form.starts_at.value.replace("T", " ") + ":00" : null,
+        ends_at: form.ends_at.value ? form.ends_at.value.replace("T", " ") + ":00" : null,
+        grant_days: parseInt(form.grant_days.value),
+        api_quota: parseInt(form.api_quota.value),
+        api_sub: true,
+        max_claims: parseInt(form.max_claims.value),
+    };
+
+    const resp = await fetch("/api/community/admin/events?" + DEV_PARAMS, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(data),
+    });
+
+    if (resp.ok) {
+        window.location.href = "/community/admin/events/" + data.slug;
+    } else {
+        const err = await resp.json();
+        alert(err.detail || "Failed to create event");
+    }
+    return false;
+}
+</script>
+{% endblock %}

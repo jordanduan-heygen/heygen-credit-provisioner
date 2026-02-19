@@ -1,0 +1,147 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ event.name }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>{{ event.name }}</h1>
+    <div class="header-actions">
+        <a href="/community/{{ event.slug }}" target="_blank" class="btn-secondary btn-sm">View Page</a>
+        <a href="/community/{{ event.slug }}/qr" target="_blank" class="btn-secondary btn-sm">QR Code</a>
+        <button class="btn-secondary btn-sm" id="btn-toggle"
+                onclick="toggleActive()">
+            {{ "Deactivate" if event.active else "Activate" }}
+        </button>
+    </div>
+</div>
+
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>Event Info</h3>
+        <dl>
+            <dt>Slug</dt><dd><code>{{ event.slug }}</code></dd>
+            <dt>Status</dt>
+            <dd>
+                <span class="status-dot {{ 'status-live' if event.active else 'status-inactive' }}"></span>
+                {{ "Live" if event.active else "Inactive" }}
+            </dd>
+            <dt>Dates</dt><dd>{{ event.starts_at or "—" }} to {{ event.ends_at or "—" }}</dd>
+            <dt>Grant</dt><dd>{{ event.grant_days }} days / {{ event.api_quota }} quota</dd>
+            <dt>Max Claims</dt><dd>{{ event.max_claims }}</dd>
+            <dt>Created</dt><dd>{{ event.created_at }} by {{ event.created_by or "—" }}</dd>
+        </dl>
+    </div>
+    <div class="detail-card">
+        <h3>Stats</h3>
+        <div class="mini-stats">
+            <div class="mini-stat">
+                <span class="mini-value">{{ stats.success or 0 }}</span>
+                <span class="mini-label">Granted</span>
+            </div>
+            <div class="mini-stat">
+                <span class="mini-value">{{ stats.active_grants or 0 }}</span>
+                <span class="mini-label">Active</span>
+            </div>
+            <div class="mini-stat">
+                <span class="mini-value">{{ stats.pending or 0 }}</span>
+                <span class="mini-label">Pending</span>
+            </div>
+            <div class="mini-stat">
+                <span class="mini-value">{{ stats.errors or 0 }}</span>
+                <span class="mini-label">Errors</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="section-header">
+    <h2>Claims</h2>
+    <div class="filter-bar">
+        <select id="status-filter" onchange="loadClaims()">
+            <option value="">All statuses</option>
+            <option value="SUCCESS">Success</option>
+            <option value="PENDING">Pending</option>
+            <option value="ERROR">Error</option>
+            <option value="RATE_LIMITED">Rate Limited</option>
+        </select>
+    </div>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Email</th>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Attempt</th>
+            <th>Created</th>
+            <th>Expires</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="claims-body">
+        <tr><td colspan="8" class="loading">Loading...</td></tr>
+    </tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const EVENT_SLUG = "{{ event.slug }}";
+const DEV_PARAMS = "{{ dev_params }}";
+
+async function loadClaims() {
+    const status = document.getElementById("status-filter").value;
+    let url = `/api/community/admin/events/${EVENT_SLUG}/claims?limit=200&` + DEV_PARAMS;
+    if (status) url += `&status=${status}`;
+
+    const resp = await fetch(url);
+    const claims = await resp.json();
+    const tbody = document.getElementById("claims-body");
+
+    if (claims.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">No claims</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = claims.map(c => `
+        <tr>
+            <td>${c.id}</td>
+            <td>${c.email}</td>
+            <td>${c.name || "—"}</td>
+            <td><span class="claim-status claim-${c.status.toLowerCase()}">${c.status}</span></td>
+            <td>${c.attempt}</td>
+            <td>${c.created_at}</td>
+            <td>${c.expires_at || "—"}</td>
+            <td>
+                ${c.status !== "PENDING" ?
+                    `<button class="btn-link" onclick="rerunClaim(${c.id})">Rerun</button>` : "—"}
+            </td>
+        </tr>
+    `).join("");
+}
+
+async function rerunClaim(claimId) {
+    if (!confirm("Rerun this claim?")) return;
+    const resp = await fetch(
+        `/api/community/admin/claims/${claimId}/rerun?` + DEV_PARAMS,
+        {method: "POST"}
+    );
+    const data = await resp.json();
+    alert(data.message || data.detail);
+    loadClaims();
+}
+
+async function toggleActive() {
+    const current = {{ "true" if event.active else "false" }};
+    const resp = await fetch(`/api/community/admin/events/${EVENT_SLUG}?` + DEV_PARAMS, {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({active: !current}),
+    });
+    if (resp.ok) location.reload();
+}
+
+loadClaims();
+</script>
+{% endblock %}
