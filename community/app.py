@@ -16,7 +16,7 @@ Endpoints:
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 import os
 
@@ -26,6 +26,7 @@ from community.models import (
     ClaimStatusResponse, EventStatsResponse,
 )
 from community.auth import get_current_user, require_admin
+from community.qr import generate_qr_png
 
 app = FastAPI(title="HeyGen Community Events Portal")
 
@@ -44,6 +45,43 @@ app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), na
 @app.on_event("startup")
 def startup():
     db.init_db()
+
+
+# ---------------------------------------------------------------------------
+# HTML Pages
+# ---------------------------------------------------------------------------
+
+@app.get("/community/{slug}")
+def event_page(slug: str, request: Request):
+    """Render the event check-in page."""
+    event = db.get_event(slug)
+    if not event:
+        raise HTTPException(404, "Event not found")
+    try:
+        user = get_current_user(request)
+    except HTTPException:
+        # Not logged in — in production, redirect to OAuth
+        # In dev mode this won't happen (dev user always exists)
+        raise HTTPException(401, "Please log in to HeyGen first")
+    return templates.TemplateResponse("event.html", {
+        "request": request,
+        "event": event,
+        "user": user,
+    })
+
+
+@app.get("/community/{slug}/qr")
+def event_qr(slug: str, request: Request):
+    """Generate a QR code PNG pointing to the event check-in page."""
+    event = db.get_event(slug)
+    if not event:
+        raise HTTPException(404, "Event not found")
+    base_url = str(request.base_url).rstrip("/")
+    event_url = f"{base_url}/community/{slug}"
+    if event.get("qr_token"):
+        event_url += f"?t={event['qr_token']}"
+    png_bytes = generate_qr_png(event_url)
+    return Response(content=png_bytes, media_type="image/png")
 
 
 # ---------------------------------------------------------------------------

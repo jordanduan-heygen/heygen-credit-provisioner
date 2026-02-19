@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}{{ event.name }} — HeyGen Community{% endblock %}
+
+{% block body %}
+<div class="event-page">
+    <div class="event-card">
+        <div class="event-header">
+            <div class="logo">HeyGen</div>
+            <span class="badge">Community Event</span>
+        </div>
+
+        <h1>{{ event.name }}</h1>
+
+        {% if event.starts_at or event.ends_at %}
+        <p class="event-meta">
+            {% if event.starts_at %}Starts: {{ event.starts_at }}{% endif %}
+            {% if event.ends_at %} &middot; Ends: {{ event.ends_at }}{% endif %}
+        </p>
+        {% endif %}
+
+        <div class="grant-info">
+            <span>{{ event.grant_days }}-day creator trial</span>
+            <span>&middot;</span>
+            <span>{{ event.api_quota }} API quota</span>
+        </div>
+
+        <!-- State: Ready to activate -->
+        <div id="state-activate" class="state">
+            <p class="welcome">Welcome, <strong id="user-name">{{ user.name }}</strong>!</p>
+            <button id="btn-activate" class="btn-primary" onclick="activate()">
+                Activate Creator Access
+            </button>
+        </div>
+
+        <!-- State: Processing -->
+        <div id="state-processing" class="state" style="display:none;">
+            <div class="spinner"></div>
+            <p>Activating your creator access...</p>
+        </div>
+
+        <!-- State: Success -->
+        <div id="state-success" class="state" style="display:none;">
+            <div class="success-icon">&#10003;</div>
+            <h2>You're activated!</h2>
+            <p>Creator access until <strong id="expires-at"></strong></p>
+            <a href="https://docs.heygen.com" class="btn-secondary">Get Started &rarr;</a>
+        </div>
+
+        <!-- State: Already claimed -->
+        <div id="state-already" class="state" style="display:none;">
+            <div class="info-icon">&#8505;</div>
+            <h2>Already activated</h2>
+            <p>You already activated for this event.</p>
+            <p>Expires: <strong id="already-expires-at"></strong></p>
+        </div>
+
+        <!-- State: Error -->
+        <div id="state-error" class="state" style="display:none;">
+            <div class="error-icon">&#10007;</div>
+            <h2>Something went wrong</h2>
+            <p id="error-message"></p>
+            <button class="btn-secondary" onclick="location.reload()">Try Again</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const EVENT_SLUG = "{{ event.slug }}";
+let pollTimer = null;
+
+async function activate() {
+    document.getElementById("state-activate").style.display = "none";
+    document.getElementById("state-processing").style.display = "block";
+
+    try {
+        const resp = await fetch("/api/community/claim", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({event_slug: EVENT_SLUG}),
+        });
+        const data = await resp.json();
+
+        if (!resp.ok) {
+            showError(data.detail || "Failed to activate");
+            return;
+        }
+
+        if (data.status === "SUCCESS") {
+            showSuccess(data.expires_at);
+        } else if (data.status === "PENDING") {
+            pollForStatus();
+        } else if (data.status === "ERROR") {
+            showError(data.message || "An error occurred");
+        } else {
+            // Already claimed with a known status
+            if (data.expires_at) {
+                showAlready(data.expires_at);
+            } else {
+                showSuccess(data.expires_at);
+            }
+        }
+    } catch (e) {
+        showError("Network error — please try again");
+    }
+}
+
+function pollForStatus() {
+    let attempts = 0;
+    pollTimer = setInterval(async () => {
+        attempts++;
+        if (attempts > 40) {  // 40 * 3s = 2 min timeout
+            clearInterval(pollTimer);
+            showError("Activation is taking longer than expected. Please check back.");
+            return;
+        }
+
+        try {
+            const resp = await fetch(
+                `/api/community/claim/status?event_slug=${EVENT_SLUG}`
+            );
+            const data = await resp.json();
+
+            if (data.status === "SUCCESS") {
+                clearInterval(pollTimer);
+                showSuccess(data.expires_at);
+            } else if (data.status === "ERROR") {
+                clearInterval(pollTimer);
+                showError(data.message || "Activation failed");
+            }
+            // PENDING — keep polling
+        } catch (e) {
+            // Network blip — keep polling
+        }
+    }, 3000);
+}
+
+function showSuccess(expiresAt) {
+    document.getElementById("state-processing").style.display = "none";
+    document.getElementById("state-activate").style.display = "none";
+    document.getElementById("state-success").style.display = "block";
+    document.getElementById("expires-at").textContent =
+        expiresAt ? new Date(expiresAt + "Z").toLocaleDateString() : "soon";
+}
+
+function showAlready(expiresAt) {
+    document.getElementById("state-processing").style.display = "none";
+    document.getElementById("state-activate").style.display = "none";
+    document.getElementById("state-already").style.display = "block";
+    document.getElementById("already-expires-at").textContent =
+        expiresAt ? new Date(expiresAt + "Z").toLocaleDateString() : "N/A";
+}
+
+function showError(msg) {
+    document.getElementById("state-processing").style.display = "none";
+    document.getElementById("state-activate").style.display = "none";
+    document.getElementById("state-error").style.display = "block";
+    document.getElementById("error-message").textContent = msg;
+}
+</script>
+{% endblock %}
